@@ -75,6 +75,10 @@ def normalize_data(opt, dtype, sequence):
     if opt.dataset == 'smmnist' or opt.dataset == 'kth' or opt.dataset == 'bair' :
         sequence.transpose_(0, 1)
         sequence.transpose_(3, 4).transpose_(2, 3)
+    elif opt.dataset == 'jma':
+        sequence.transpose_(0, 1)
+        # scale to [0-1] range
+        sequence = sequence/201.0
     else:
         sequence.transpose_(0, 1)
 
@@ -147,7 +151,7 @@ def make_image(tensor):
     tensor = tensor.cpu().clamp(0, 1)
     if tensor.size(0) == 1:
         tensor = tensor.expand(3, tensor.size(1), tensor.size(2))
-    # pdb.set_trace()
+    pdb.set_trace()
     return scipy.misc.toimage(tensor.numpy(),
                               high=255*tensor.max(),
                               channel_axis=0)

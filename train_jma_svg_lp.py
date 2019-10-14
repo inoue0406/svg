@@ -1,3 +1,4 @@
+# modified for JMA rainfall data
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -11,6 +12,9 @@ import itertools
 import progressbar
 import numpy as np
 
+from jma_pytorch_dataset import *
+from scaler import *
+
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
 parser.add_argument('--beta1', default=0.9, type=float, help='momentum term for adam')
@@ -19,6 +23,8 @@ parser.add_argument('--log_dir', default='logs/lp', help='base directory to save
 parser.add_argument('--model_dir', default='', help='base directory to save logs')
 parser.add_argument('--name', default='', help='identifier for directory')
 parser.add_argument('--data_root', default='data', help='root directory for data')
+parser.add_argument('--train_path', default='data', help='csv file containing filenames for training')
+parser.add_argument('--valid_path', default='data', help='csv file containing filenames for validation')
 parser.add_argument('--optimizer', default='adam', help='optimizer to train with')
 parser.add_argument('--niter', type=int, default=300, help='number of epochs to train for')
 parser.add_argument('--seed', default=1, type=int, help='manual seed')
@@ -146,20 +152,38 @@ decoder.cuda()
 mse_criterion.cuda()
 
 # --------- load a dataset ------------------------------------
-train_data, test_data = utils.load_dataset(opt)
 
-train_loader = DataLoader(train_data,
-                          num_workers=opt.data_threads,
+# loading datasets
+train_dataset = JMARadarDataset(root_dir=opt.data_root,
+                                csv_file=opt.train_path,
+                                tdim_use=opt.n_past,
+                                transform=None)
+
+valid_dataset = JMARadarDataset(root_dir=opt.data_root,
+                                csv_file=opt.valid_path,
+                                tdim_use=opt.n_past,
+                                transform=None)
+
+train_loader = DataLoader(dataset=train_dataset,
                           batch_size=opt.batch_size,
-                          shuffle=True,
-                          drop_last=True,
-                          pin_memory=True)
-test_loader = DataLoader(test_data,
-                         num_workers=opt.data_threads,
+                          shuffle=True)
+
+test_loader = DataLoader(dataset=valid_dataset,
                          batch_size=opt.batch_size,
-                         shuffle=True,
-                         drop_last=True,
-                         pin_memory=True)
+                         shuffle=False)
+
+#train_loader = DataLoader(train_data,
+#                          num_workers=opt.data_threads,
+#                          batch_size=opt.batch_size,
+#                          shuffle=True,
+#                          drop_last=True,
+#                          pin_memory=True)
+#test_loader = DataLoader(test_data,
+#                         num_workers=opt.data_threads,
+#                         batch_size=opt.batch_size,
+#                         shuffle=True,
+#                         drop_last=True,
+#                         pin_memory=True)
 
 def get_training_batch():
     while True:
@@ -174,8 +198,6 @@ def get_testing_batch():
             batch = utils.normalize_data(opt, dtype, sequence)
             yield batch 
 testing_batch_generator = get_testing_batch()
-
-import pdb;pdb.set_trace()
 
 # --------- plotting funtions ------------------------------------
 def plot(x, epoch):

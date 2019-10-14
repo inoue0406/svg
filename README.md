@@ -1,3 +1,6 @@
+# A fork from SVG model for rainfall prediction
+https://github.com/edenton/svg/tree/master/models
+
 # Stochastic Video Generation with a Learned Prior
 This is code for the paper [Stochastic Video Generation with a Learned Prior](https://arxiv.org/abs/1802.07687) by Emily Denton and Rob Fergus. See the [project page](https://sites.google.com/view/svglp/) for details and generated video sequences.
 

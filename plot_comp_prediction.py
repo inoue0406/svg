@@ -142,7 +142,8 @@ def make_gifs(x, idx, name,frame_predictor,posterior,prior,encoder,decoder):
     # plot
     for j in range(opt.batch_size):
         plot_rainfall(TRU[:,j,0,:,:],GEN[:,:,j,0,:,:],opt.log_dir,name+"_sample"+str(j),nsample)
-    import pdb; pdb.set_trace()
+    # exit(temp)
+    sys.exit()
 
     progress.finish()
     utils.clear_progressbar()

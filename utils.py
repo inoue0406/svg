@@ -79,6 +79,8 @@ def normalize_data(opt, dtype, sequence):
         sequence.transpose_(0, 1)
         # scale to [0-1] range
         sequence = sequence/201.0
+        # sqrt transofrm
+        sequence = torch.sqrt(sequence)
     else:
         sequence.transpose_(0, 1)
 
@@ -151,9 +153,8 @@ def make_image(tensor):
     tensor = tensor.cpu().clamp(0, 1)
     if tensor.size(0) == 1:
         tensor = tensor.expand(3, tensor.size(1), tensor.size(2))
-    pdb.set_trace()
     return scipy.misc.toimage(tensor.numpy(),
-                              high=255*tensor.max(),
+                              high=255*tensor.max().numpy(),
                               channel_axis=0)
 
 def draw_text_tensor(tensor, text):

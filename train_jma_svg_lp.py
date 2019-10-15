@@ -13,7 +13,6 @@ import progressbar
 import numpy as np
 
 from jma_pytorch_dataset import *
-from scaler import *
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lr', default=0.002, type=float, help='learning rate')
@@ -165,12 +164,18 @@ valid_dataset = JMARadarDataset(root_dir=opt.data_root,
                                 transform=None)
 
 train_loader = DataLoader(dataset=train_dataset,
+                          num_workers=opt.data_threads,
                           batch_size=opt.batch_size,
-                          shuffle=True)
+                          shuffle=True,
+                          drop_last=True,
+                          pin_memory=True)
 
 test_loader = DataLoader(dataset=valid_dataset,
+                         num_workers=opt.data_threads,
                          batch_size=opt.batch_size,
-                         shuffle=False)
+                         shuffle=False,
+                         drop_last=True,
+                         pin_memory=True)
 
 #train_loader = DataLoader(train_data,
 #                          num_workers=opt.data_threads,
@@ -237,7 +242,7 @@ def plot(x, epoch):
     nrow = min(opt.batch_size, 10)
     for i in range(nrow):
         # ground truth sequence
-        row = [] 
+        row = []
         for t in range(opt.n_eval):
             row.append(gt_seq[t][i])
         to_plot.append(row)

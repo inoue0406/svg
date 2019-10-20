@@ -265,7 +265,7 @@ for epoch in range(opt.niter):
     utils.clear_progressbar()
 
     print('[%02d] mse loss: %.5f | kld loss: %.5f (%d)' % (epoch, epoch_mse/opt.epoch_size, epoch_kld/opt.epoch_size, epoch*opt.epoch_size*opt.batch_size))
-    flog.write('%d, %f, %f' % (epoch,
+    flog.write('%d, %f, %f\n' % (epoch,
                      epoch_mse/opt.epoch_size,
                      epoch_kld/opt.epoch_size))
 

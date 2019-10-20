@@ -230,7 +230,7 @@ for epoch in range(opt.niter):
     utils.clear_progressbar()
 
     print('[%02d] mse loss: %.5f (%d)' % (epoch, epoch_mse/opt.epoch_size, epoch*opt.epoch_size*opt.batch_size))
-    flog.write('%d, %f' % (epoch,epoch_mse/opt.epoch_size))
+    flog.write('%d, %f\n' % (epoch,epoch_mse/opt.epoch_size))
 
     # save the model
     torch.save({

@@ -102,7 +102,7 @@ def make_gifs(x, idx, name,frame_predictor,encoder,decoder):
     GEN = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
     for i in range(opt.n_eval):
         TRU[i,:,:,:,:] = inv_scaler(x[i].cpu().numpy())
-        GEN[k,i,:,:,:,:] = inv_scaler(all_gen[i].cpu().numpy())
+        GEN[i,:,:,:,:] = inv_scaler(all_gen[i].cpu().numpy())
     # plot
     print(" ground truth max:",np.max(TRU)," gen max:",np.max(GEN))
     for j in range(opt.batch_size):

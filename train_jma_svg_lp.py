@@ -311,7 +311,6 @@ def plot_rec(x, epoch):
     fname = '%s/gen/rec_%d.png' % (opt.log_dir, epoch) 
     utils.save_tensors_image(fname, to_plot)
 
-
 # --------- training funtions ------------------------------------
 def train(x):
     frame_predictor.zero_grad()
@@ -354,6 +353,10 @@ def train(x):
     return mse.data.cpu().numpy()/(opt.n_past+opt.n_future), kld.data.cpu().numpy()/(opt.n_future+opt.n_past)
 
 # --------- training loop ------------------------------------
+# log
+flog = open('%s/train_loss.csv' % opt.log_dir,'w')
+flog.write('epoch, mse loss, kld loss')
+
 for epoch in range(opt.niter):
     frame_predictor.train()
     posterior.train()
@@ -372,11 +375,13 @@ for epoch in range(opt.niter):
         epoch_mse += mse
         epoch_kld += kld
 
-
     progress.finish()
     utils.clear_progressbar()
 
     print('[%02d] mse loss: %.5f | kld loss: %.5f (%d)' % (epoch, epoch_mse/opt.epoch_size, epoch_kld/opt.epoch_size, epoch*opt.epoch_size*opt.batch_size))
+    flog.write('%d, %f, %f' % (epoch,
+                     epoch_mse/opt.epoch_size,
+                     epoch_kld/opt.epoch_size))
 
     # plot some stuff
     frame_predictor.eval()

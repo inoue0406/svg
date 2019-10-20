@@ -33,7 +33,6 @@ def inv_scaler(x):
     """
     return (x ** 2.0)*201.0
 
-
 def pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder):
     """
     Do one prediction and return as numpy array
@@ -76,9 +75,8 @@ def pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder):
         for k in range(opt.nsample):
             GEN[k,:,i,:,:,:] = inv_scaler(all_gen[k][i].cpu().numpy())
     return GEN
-    
 
-def eval_whole_dataset(batch_generator, opt, name, threshold,
+def eval_whole_dataset(batch_loader, opt, name, threshold,
                        frame_predictor,posterior,prior,encoder,decoder):
     """
     Perform evaluation for the whole dataset
@@ -94,8 +92,14 @@ def eval_whole_dataset(batch_generator, opt, name, threshold,
     m_yy_all = [emp,emp,emp]
     MaxSE_all = [emp,emp,emp]
     FSS_t_all = [emp,emp,emp]
-    
-    for ibatch,x in enumerate(batch_generator):
+
+    print("total batches to be processed: ",len(batch_loader))
+    dtype = torch.cuda.FloatTensor
+
+    ibatch = 0
+    for sequence in batch_loader:
+        x = utils.normalize_data(opt, dtype, sequence)
+        ibatch += 1
         print(name," threshold:",threshold," batch:",ibatch)
         x_in = x[0]
         # Prep True data
@@ -166,7 +170,6 @@ def post_eval_prediction(opt,mode='png_ind'):
     random.seed(opt.seed)
     torch.manual_seed(opt.seed)
     torch.cuda.manual_seed_all(opt.seed)
-    dtype = torch.cuda.FloatTensor
     
     # ---------------- load the models  ----------------
     tmp = torch.load(opt.model_path)
@@ -228,24 +231,10 @@ def post_eval_prediction(opt,mode='png_ind'):
                              drop_last=True,
                              pin_memory=True)
     
-#    def get_training_batch():
-#        while True:
-#            for sequence in train_loader:
-#                batch = utils.normalize_data(opt, dtype, sequence)
-#                yield batch
-#    training_batch_generator = get_training_batch()
-    
-    def get_testing_batch():
-        while True:
-            for sequence in test_loader:
-                batch = utils.normalize_data(opt, dtype, sequence)
-                yield batch 
-    testing_batch_generator = get_testing_batch()
-
     for threshold in [0.5,10.0,20.0]:
-        #eval_whole_dataset(training_batch_generator, opt, 'train', threshold,
+        #eval_whole_dataset(train_loader, opt, 'train', threshold,
         #                   frame_predictor,posterior,prior,encoder,decoder)
-        eval_whole_dataset(testing_batch_generator, opt, 'test', threshold,
+        eval_whole_dataset(test_loader, opt, 'test', threshold,
                            frame_predictor,posterior,prior,encoder,decoder)
         
 if __name__ == '__main__':

@@ -1,4 +1,6 @@
+# Deterministic forecast
 # modified for JMA rainfall data
+# 
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -35,17 +37,12 @@ parser.add_argument('--n_past', type=int, default=5, help='number of frames to c
 parser.add_argument('--n_future', type=int, default=10, help='number of frames to predict during training')
 parser.add_argument('--n_eval', type=int, default=30, help='number of frames to predict during eval')
 parser.add_argument('--rnn_size', type=int, default=256, help='dimensionality of hidden layer')
-parser.add_argument('--prior_rnn_layers', type=int, default=1, help='number of layers')
-parser.add_argument('--posterior_rnn_layers', type=int, default=1, help='number of layers')
 parser.add_argument('--predictor_rnn_layers', type=int, default=2, help='number of layers')
-parser.add_argument('--z_dim', type=int, default=10, help='dimensionality of z_t')
 parser.add_argument('--g_dim', type=int, default=128, help='dimensionality of encoder output vector and decoder input vector')
-parser.add_argument('--beta', type=float, default=0.0001, help='weighting on KL to prior')
 parser.add_argument('--model', default='dcgan', help='model type (dcgan | vgg)')
 parser.add_argument('--data_threads', type=int, default=5, help='number of data loading threads')
 parser.add_argument('--num_digits', type=int, default=2, help='number of digits for moving mnist')
 parser.add_argument('--last_frame_skip', action='store_true', help='if true, skip connections go between frame t and frame t+t rather than last ground truth frame')
-
 
 opt = parser.parse_args()
 if opt.model_dir != '':
@@ -67,7 +64,6 @@ torch.manual_seed(opt.seed)
 torch.cuda.manual_seed_all(opt.seed)
 dtype = torch.cuda.FloatTensor
 
-
 # ---------------- load the models  ----------------
 
 print(opt)
@@ -86,15 +82,9 @@ else:
 import models.lstm as lstm_models
 if opt.model_dir != '':
     frame_predictor = saved_model['frame_predictor']
-    posterior = saved_model['posterior']
-    prior = saved_model['prior']
 else:
-    frame_predictor = lstm_models.lstm(opt.g_dim+opt.z_dim, opt.g_dim, opt.rnn_size, opt.predictor_rnn_layers, opt.batch_size)
-    posterior = lstm_models.gaussian_lstm(opt.g_dim, opt.z_dim, opt.rnn_size, opt.posterior_rnn_layers, opt.batch_size)
-    prior = lstm_models.gaussian_lstm(opt.g_dim, opt.z_dim, opt.rnn_size, opt.prior_rnn_layers, opt.batch_size)
+    frame_predictor = lstm_models.lstm(opt.g_dim, opt.g_dim, opt.rnn_size, opt.predictor_rnn_layers, opt.batch_size)
     frame_predictor.apply(utils.init_weights)
-    posterior.apply(utils.init_weights)
-    prior.apply(utils.init_weights)
 
 if opt.model == 'dcgan':
     if opt.image_width == 64:
@@ -119,26 +109,14 @@ else:
     decoder.apply(utils.init_weights)
 
 frame_predictor_optimizer = opt.optimizer(frame_predictor.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-posterior_optimizer = opt.optimizer(posterior.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
-prior_optimizer = opt.optimizer(prior.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 encoder_optimizer = opt.optimizer(encoder.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 decoder_optimizer = opt.optimizer(decoder.parameters(), lr=opt.lr, betas=(opt.beta1, 0.999))
 
 # --------- loss functions ------------------------------------
 mse_criterion = nn.MSELoss()
-def kl_criterion(mu1, logvar1, mu2, logvar2):
-    # KL( N(mu_1, sigma2_1) || N(mu_2, sigma2_2)) = 
-    #   log( sqrt(
-    # 
-    sigma1 = logvar1.mul(0.5).exp() 
-    sigma2 = logvar2.mul(0.5).exp() 
-    kld = torch.log(sigma2/sigma1) + (torch.exp(logvar1) + (mu1 - mu2)**2)/(2*torch.exp(logvar2)) - 1/2
-    return kld.sum() / opt.batch_size
 
 # --------- transfer to gpu ------------------------------------
 frame_predictor.cuda()
-posterior.cuda()
-prior.cuda()
 encoder.cuda()
 decoder.cuda()
 mse_criterion.cuda()
@@ -200,15 +178,11 @@ testing_batch_generator = get_testing_batch()
 # --------- training funtions ------------------------------------
 def train(x):
     frame_predictor.zero_grad()
-    posterior.zero_grad()
-    prior.zero_grad()
     encoder.zero_grad()
     decoder.zero_grad()
 
     # initialize the hidden state.
     frame_predictor.hidden = frame_predictor.init_hidden()
-    posterior.hidden = posterior.init_hidden()
-    prior.hidden = prior.init_hidden()
 
     mse = 0
     kld = 0
@@ -219,24 +193,18 @@ def train(x):
             h, skip = h
         else:
             h = h[0]
-        z_t, mu, logvar = posterior(h_target)
-        _, mu_p, logvar_p = prior(h)
-        h_pred = frame_predictor(torch.cat([h, z_t], 1))
+        h_pred = frame_predictor(h)
         x_pred = decoder([h_pred, skip])
         mse += mse_criterion(x_pred, x[i])
-        kld += kl_criterion(mu, logvar, mu_p, logvar_p)
 
-    loss = mse + kld*opt.beta
+    loss = mse
     loss.backward()
 
     frame_predictor_optimizer.step()
-    posterior_optimizer.step()
-    prior_optimizer.step()
     encoder_optimizer.step()
     decoder_optimizer.step()
 
-
-    return mse.data.cpu().numpy()/(opt.n_past+opt.n_future), kld.data.cpu().numpy()/(opt.n_future+opt.n_past)
+    return mse.data.cpu().numpy()/(opt.n_past+opt.n_future)
 
 # --------- training loop ------------------------------------
 # log
@@ -245,8 +213,6 @@ flog.write('epoch, mse loss, kld loss')
 
 for epoch in range(opt.niter):
     frame_predictor.train()
-    posterior.train()
-    prior.train()
     encoder.train()
     decoder.train()
     epoch_mse = 0
@@ -257,25 +223,20 @@ for epoch in range(opt.niter):
         x = next(training_batch_generator)
 
         # train frame_predictor 
-        mse, kld = train(x)
+        mse = train(x)
         epoch_mse += mse
-        epoch_kld += kld
 
     progress.finish()
     utils.clear_progressbar()
 
-    print('[%02d] mse loss: %.5f | kld loss: %.5f (%d)' % (epoch, epoch_mse/opt.epoch_size, epoch_kld/opt.epoch_size, epoch*opt.epoch_size*opt.batch_size))
-    flog.write('%d, %f, %f' % (epoch,
-                     epoch_mse/opt.epoch_size,
-                     epoch_kld/opt.epoch_size))
+    print('[%02d] mse loss: %.5f (%d)' % (epoch, epoch_mse/opt.epoch_size, epoch*opt.epoch_size*opt.batch_size))
+    flog.write('%d, %f' % (epoch,epoch_mse/opt.epoch_size))
 
     # save the model
     torch.save({
         'encoder': encoder,
         'decoder': decoder,
         'frame_predictor': frame_predictor,
-        'posterior': posterior,
-        'prior': prior,
         'opt': opt},
         '%s/model.pth' % opt.log_dir)
     if epoch % 10 == 0:

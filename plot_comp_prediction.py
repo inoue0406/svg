@@ -27,13 +27,11 @@ from jma_pytorch_dataset import *
 from scaler import *
 from colormap_JMA import Colormap_JMA
 
-def mod_str_interval(inte_str):
-    # a tweak for decent filename 
-    inte_str = inte_str.replace('(','')
-    inte_str = inte_str.replace(']','')
-    inte_str = inte_str.replace(',','')
-    inte_str = inte_str.replace(' ','_')
-    return(inte_str)
+def inv_scaler(x):
+    """
+    Back to original scale
+    """
+    return (x ** 2.0)*201.0
 
 def plot_rainfall(pic_tg,pic_pred,pic_path,fname,nsample):
     # input
@@ -44,20 +42,22 @@ def plot_rainfall(pic_tg,pic_pred,pic_path,fname,nsample):
     cm = Colormap_JMA()
     for nt in range(pic_tg.shape[0]):
         fig, ax = plt.subplots(figsize=(50, 8))
-        fig.suptitle("Precip prediction starting at: "+fname, fontsize=10)
+        fig.suptitle("Precip prediction starting at: "+fname, fontsize=30)
         #
         id = nt
         dtstr = str((id+1)*5)
         # target
         plt.subplot(1,nsample+1,1)
         im = plt.imshow(pic_tg[id,:,:],vmin=0,vmax=50,cmap=cm,origin='lower')
-        plt.title("true:"+dtstr+"min")
+        plt.title("true:"+dtstr+"min", fontsize=30)
+        plt.axis('off')
         plt.grid()
         # predicted
         for j in range(nsample):
             plt.subplot(1,nsample+1,j+2)
             im = plt.imshow(pic_pred[j,id,:,:],vmin=0,vmax=50,cmap=cm,origin='lower')
-            plt.title("pred:"+dtstr+"min")
+            plt.title("pred:"+dtstr+"min", fontsize=30)
+            plt.axis('off')
             plt.grid()
         # color bar
         fig.subplots_adjust(right=0.93,top=0.85)
@@ -68,35 +68,9 @@ def plot_rainfall(pic_tg,pic_pred,pic_path,fname,nsample):
         plt.savefig(pic_path+'/'+'comp_pred_'+fname+nt_str+'.png')
         plt.close()
     
-
 def make_gifs(x, idx, name,frame_predictor,posterior,prior,encoder,decoder):
-    # get approx posterior sample
-    frame_predictor.hidden = frame_predictor.init_hidden()
-    posterior.hidden = posterior.init_hidden()
-    posterior_gen = []
-    posterior_gen.append(x[0])
-    x_in = x[0]
-    for i in range(1, opt.n_eval):
-        h = encoder(x_in)
-        h_target = encoder(x[i])[0].detach()
-        if opt.last_frame_skip or i < opt.n_past:	
-            h, skip = h
-        else:
-            h, _ = h
-        h = h.detach()
-        _, z_t, _= posterior(h_target) # take the mean
-        if i < opt.n_past:
-            frame_predictor(torch.cat([h, z_t], 1)) 
-            posterior_gen.append(x[i])
-            x_in = x[i]
-        else:
-            h_pred = frame_predictor(torch.cat([h, z_t], 1)).detach()
-            x_in = decoder([h_pred, skip]).detach()
-            posterior_gen.append(x_in)
 
     nsample = opt.nsample
-    ssim = np.zeros((opt.batch_size, nsample, opt.n_future))
-    psnr = np.zeros((opt.batch_size, nsample, opt.n_future))
     progress = progressbar.ProgressBar(max_value=nsample).start()
     all_gen = []
     for s in range(nsample):
@@ -130,72 +104,21 @@ def make_gifs(x, idx, name,frame_predictor,posterior,prior,encoder,decoder):
                 gen_seq.append(x_in.data.cpu().numpy())
                 gt_seq.append(x[i].data.cpu().numpy())
                 all_gen[s].append(x_in)
-        _, ssim[:, s, :], psnr[:, s, :] = utils.eval_seq(gt_seq, gen_seq)
 
     # prep np.array to be plotted
     TRU = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
     GEN = np.zeros([nsample, opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
     for i in range(opt.n_eval):
-        TRU[i,:,:,:,:] = x[i].cpu().numpy()*201.0
+        TRU[i,:,:,:,:] = inv_scaler(x[i].cpu().numpy())
         for k in range(nsample):
-            GEN[k,i,:,:,:,:] = all_gen[k][i].cpu().numpy()*201.0
+            GEN[k,i,:,:,:,:] = inv_scaler(all_gen[k][i].cpu().numpy())
     # plot
+    print(" ground truth max:",np.max(TRU)," gen max:",np.max(GEN))
     for j in range(opt.batch_size):
         plot_rainfall(TRU[:,j,0,:,:],GEN[:,:,j,0,:,:],opt.log_dir,name+"_sample"+str(j),nsample)
-    # exit(temp)
-    sys.exit()
-
+        
     progress.finish()
     utils.clear_progressbar()
-
-    ###### ssim ######
-    for i in range(opt.batch_size):
-        gifs = [ [] for t in range(opt.n_eval) ]
-        text = [ [] for t in range(opt.n_eval) ]
-        mean_ssim = np.mean(ssim[i], 1)
-        ordered = np.argsort(mean_ssim)
-        rand_sidx = [np.random.randint(nsample) for s in range(3)]
-        for t in range(opt.n_eval):
-            # gt 
-            gifs[t].append(add_border(x[t][i], 'green'))
-            text[t].append('Ground\ntruth')
-            #posterior 
-            if t < opt.n_past:
-                color = 'green'
-            else:
-                color = 'red'
-            gifs[t].append(add_border(posterior_gen[t][i], color))
-            text[t].append('Approx.\nposterior')
-            # best 
-            if t < opt.n_past:
-                color = 'green'
-            else:
-                color = 'red'
-            sidx = ordered[-1]
-            gifs[t].append(add_border(all_gen[sidx][t][i], color))
-            text[t].append('Best SSIM')
-            # random 3
-            for s in range(len(rand_sidx)):
-                gifs[t].append(add_border(all_gen[rand_sidx[s]][t][i], color))
-                text[t].append('Random\nsample %d' % (s+1))
-
-        fname = '%s/%s_%d.gif' % (opt.log_dir, name, idx+i) 
-        utils.save_gif_with_text(fname, gifs, text)
-
-def add_border(x, color, pad=1):
-    w = x.size()[1]
-    nc = x.size()[0]
-    px = Variable(torch.zeros(3, w+2*pad+30, w+2*pad))
-    if color == 'red':
-        px[0] =0.7 
-    elif color == 'green':
-        px[1] = 0.7
-    if nc == 1:
-        for c in range(3):
-            px[c, pad:w+pad, pad:w+pad] = x
-    else:
-        px[:, pad:w+pad, pad:w+pad] = x
-    return px
         
 # plot comparison of predicted vs ground truth
 def plot_comp_prediction(opt,df_sampled,mode='png_ind'):
@@ -282,8 +205,8 @@ def plot_comp_prediction(opt,df_sampled,mode='png_ind'):
 
     for i in range(0, opt.N, opt.batch_size):
         # plot train
-        train_x = next(training_batch_generator)
-        make_gifs(train_x, i, 'train',frame_predictor,posterior,prior,encoder,decoder)
+        #train_x = next(training_batch_generator)
+        #make_gifs(train_x, i, 'train',frame_predictor,posterior,prior,encoder,decoder)
     
         # plot test
         test_x = next(testing_batch_generator)

@@ -15,7 +15,6 @@ import sys
 import random
 
 import itertools
-import progressbar
 
 import matplotlib
 matplotlib.use('Agg')
@@ -26,6 +25,7 @@ import utils
 from jma_pytorch_dataset import *
 from scaler import *
 from colormap_JMA import Colormap_JMA
+from criteria_precip import *
 
 def inv_scaler(x):
     """
@@ -38,10 +38,8 @@ def pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder):
     """
     Do one prediction and return as numpy array
     """
-    progress = progressbar.ProgressBar(max_value=nsample).start()
     all_gen = []
     for s in range(opt.nsample):
-        progress.update(s+1)
         gen_seq = []
         gt_seq = []
         frame_predictor.hidden = frame_predictor.init_hidden()
@@ -73,31 +71,92 @@ def pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder):
                 all_gen[s].append(x_in)
 
     # prep np.array to be plotted
-    GEN = np.zeros([opt.nsample, opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
+    GEN = np.zeros([opt.nsample, opt.batch_size, opt.n_eval,  1, opt.image_width, opt.image_width])
     for i in range(opt.n_eval):
         for k in range(opt.nsample):
-            GEN[k,i,:,:,:,:] = inv_scaler(all_gen[k][i].cpu().numpy())
+            GEN[k,:,i,:,:,:] = inv_scaler(all_gen[k][i].cpu().numpy())
     return GEN
     
 
-def eval_batch(x, idx, name,frame_predictor,posterior,prior,encoder,decoder):
+def eval_whole_dataset(batch_generator, opt, name, threshold,
+                       frame_predictor,posterior,prior,encoder,decoder):
     """
-    Perform evaluation for single batch
+    Perform evaluation for the whole dataset
     """
-    # get approx posterior sample
-    frame_predictor.hidden = frame_predictor.init_hidden()
-    posterior.hidden = posterior.init_hidden()
-    # Prep True data
-    TRU = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
-    for i in range(opt.n_eval):
-        TRU[i,:,:,:,:] = inv_scaler(x[i].cpu().numpy())
-    # perform one prediction
-    GEN = pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder)
-
-    import pdb; pdb.set_trace
-
+    # initialize
+    emp = np.empty((0,opt.n_eval),float)
+    SumSE_all = [emp,emp,emp]
+    hit_all = [emp,emp,emp]
+    miss_all =  [emp,emp,emp]
+    falarm_all = [emp,emp,emp]
+    m_xy_all = [emp,emp,emp]
+    m_xx_all = [emp,emp,emp]
+    m_yy_all = [emp,emp,emp]
+    MaxSE_all = [emp,emp,emp]
+    FSS_t_all = [emp,emp,emp]
     
-def post_eval_prediction(opt,df_sampled,mode='png_ind'):
+    for ibatch,x in enumerate(batch_generator):
+        print(name," threshold:",threshold," batch:",ibatch)
+        x_in = x[0]
+        # Prep True data
+        TRU = np.zeros([opt.batch_size, opt.n_eval, 1, opt.image_width, opt.image_width])
+        for i in range(opt.n_eval):
+            TRU[:,i,:,:,:] = inv_scaler(x[i].cpu().numpy())
+        # perform one prediction
+        GEN = pred_single_model(x,opt,frame_predictor,posterior,prior,encoder,decoder)
+        print(" ground truth max:",np.max(TRU)," gen max:",np.max(GEN))
+        
+        # check best / worst index by MSE
+        mse_sample = np.zeros([opt.nsample,opt.n_eval])
+        for i in range(opt.batch_size):
+            for k in range(opt.nsample):
+                mse_sample[k,i] = np.mean((TRU[i] - GEN[k,i]) ** 2)
+        id_best = np.argmin(mse_sample,axis=0)
+        id_worst = np.argmax(mse_sample,axis=0)
+        # get mean, best, and worst prediction
+        GEN_mean = np.mean(GEN,axis=0)
+        GEN_best = np.zeros(GEN_mean.shape)
+        GEN_worst = np.zeros(GEN_mean.shape)
+        for i in range(opt.batch_size):
+            GEN_best[i] = GEN[id_best[i],i,:,:,:,:]
+            GEN_worst[i] = GEN[id_worst[i],i,:,:,:,:]
+
+        # Evaluation
+        for l,G in enumerate([GEN_mean,GEN_worst,GEN_best]):
+            SumSE,hit,miss,falarm,m_xy,m_xx,m_yy,MaxSE = StatRainfall(TRU,G,
+                                                                      th=threshold)
+            FSS_t = FSS_for_tensor(TRU,G,th=threshold,win=10)
+            SumSE_all[l] = np.append(SumSE_all[l],SumSE,axis=0)
+            hit_all[l] = np.append(hit_all[l],hit,axis=0)
+            miss_all[l] = np.append(miss_all[l],miss,axis=0)
+            falarm_all[l] = np.append(falarm_all[l],falarm,axis=0)
+            m_xy_all[l] = np.append(m_xy_all[l],m_xy,axis=0)
+            m_xx_all[l] = np.append(m_xx_all[l],m_xx,axis=0)
+            m_yy_all[l] = np.append(m_yy_all[l],m_yy,axis=0)
+            MaxSE_all[l] = np.append(MaxSE_all[l],MaxSE,axis=0)
+            FSS_t_all[l] = np.append(FSS_t_all[l],FSS_t,axis=0)
+        #if ibatch == 5:
+        #    break
+
+    # calc metric for the whole dataset
+    for l,txt in enumerate(["0mean","1worst","2best"]):
+        RMSE,CSI,FAR,POD,Cor,MaxMSE,FSS_mean = MetricRainfall(SumSE_all[l],hit_all[l],miss_all[l],falarm_all[l],
+                                                              m_xy_all[l],m_xx_all[l],m_yy_all[l],
+                                                              MaxSE_all[l],FSS_t_all[l],axis=(0))
+        # save evaluated metric as csv file
+        tpred = (np.arange(opt.n_eval)+1.0)*5.0 # in minutes
+        df = pd.DataFrame({'tpred_min':tpred,
+                           'RMSE':RMSE,
+                           'CSI':CSI,
+                           'FAR':FAR,
+                           'POD':POD,
+                           'Cor':Cor,
+                           'MaxMSE': MaxMSE,
+                           'FSS_mean': FSS_mean})
+        df.to_csv(os.path.join(opt.log_dir,
+                               'evaluation_predtime_%s_%.2f_%s.csv' % (name,threshold,txt)))
+    
+def post_eval_prediction(opt,mode='png_ind'):
     """
     Evaluate the model with several criteria for rainfal nowcasting task
 
@@ -169,12 +228,12 @@ def post_eval_prediction(opt,df_sampled,mode='png_ind'):
                              drop_last=True,
                              pin_memory=True)
     
-    def get_training_batch():
-        while True:
-            for sequence in train_loader:
-                batch = utils.normalize_data(opt, dtype, sequence)
-                yield batch
-    training_batch_generator = get_training_batch()
+#    def get_training_batch():
+#        while True:
+#            for sequence in train_loader:
+#                batch = utils.normalize_data(opt, dtype, sequence)
+#                yield batch
+#    training_batch_generator = get_training_batch()
     
     def get_testing_batch():
         while True:
@@ -183,15 +242,11 @@ def post_eval_prediction(opt,df_sampled,mode='png_ind'):
                 yield batch 
     testing_batch_generator = get_testing_batch()
 
-    for i in range(0, opt.N, opt.batch_size):
-        # plot train
-        train_x = next(training_batch_generator)
-        eval_batch(train_x, i, 'train',frame_predictor,posterior,prior,encoder,decoder)
-    
-        # plot test
-        test_x = next(testing_batch_generator)
-        eval_batch(test_x, i, 'test',frame_predictor,posterior,prior,encoder,decoder)
-        print(i)
+    for threshold in [0.5,10.0,20.0]:
+        #eval_whole_dataset(training_batch_generator, opt, 'train', threshold,
+        #                   frame_predictor,posterior,prior,encoder,decoder)
+        eval_whole_dataset(testing_batch_generator, opt, 'test', threshold,
+                           frame_predictor,posterior,prior,encoder,decoder)
         
 if __name__ == '__main__':
 
@@ -215,15 +270,7 @@ if __name__ == '__main__':
 
     opt.n_eval = opt.n_past+opt.n_future
     opt.max_step = opt.n_eval
-
-    # samples to be plotted
-    sample_path = '../datasets/jma/sampled_forplot_3day_JMARadar.csv'
-
-    # read sampled data in csv
-    df_sampled = pd.read_csv(sample_path)
-    print('samples to be plotted')
-    print(df_sampled)
     
-    post_eval_prediction(opt,df_sampled,mode='png_ind')
+    post_eval_prediction(opt,mode='png_ind')
 
 

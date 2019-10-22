@@ -241,7 +241,7 @@ def train(x):
 # --------- training loop ------------------------------------
 # log
 flog = open('%s/train_loss.csv' % opt.log_dir,'w')
-flog.write('epoch, mse loss, kld loss')
+flog.write('epoch, mse loss, kld loss\n')
 
 for epoch in range(opt.niter):
     frame_predictor.train()

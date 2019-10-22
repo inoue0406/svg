@@ -1,5 +1,5 @@
 #
-# Plot Predicted Rainfall Data
+# Post-evaluation by various criteria trained model
 # for non-probabilistic clstm model
 #
 import torch
@@ -26,6 +26,7 @@ import utils
 from jma_pytorch_dataset import *
 from scaler import *
 from colormap_JMA import Colormap_JMA
+from criteria_precip import *
 
 def inv_scaler(x):
     """
@@ -33,44 +34,11 @@ def inv_scaler(x):
     """
     return (x ** 2.0)*201.0
 
-def plot_rainfall(pic_tg,pic_pred,pic_path,fname):
-    # input
-    # pic_tg: numpy array with [time,x,y] dim
-    # pic_pred: numpy array with [nsmple,time,x,y] dim
-    print('Plotting: ',fname,np.max(pic_tg),np.max(pic_pred))
-    # plot
-    cm = Colormap_JMA()
-    for nt in range(pic_tg.shape[0]):
-        fig, ax = plt.subplots(figsize=(20, 8))
-        fig.suptitle("Precip prediction starting at: "+fname, fontsize=30)
-        #
-        id = nt
-        dtstr = str((id+1)*5)
-        # target
-        plt.subplot(1,2,1)
-        im = plt.imshow(pic_tg[id,:,:],vmin=0,vmax=50,cmap=cm,origin='lower')
-        plt.title("true:"+dtstr+"min", fontsize=30)
-        plt.axis('off')
-        plt.grid()
-        # predicted
-        plt.subplot(1,2,2)
-        im = plt.imshow(pic_pred[id,:,:],vmin=0,vmax=50,cmap=cm,origin='lower')
-        plt.title("pred:"+dtstr+"min", fontsize=30)
-        plt.axis('off')
-        plt.grid()
-        # color bar
-        fig.subplots_adjust(right=0.93,top=0.85)
-        cbar_ax = fig.add_axes([0.94, 0.15, 0.01, 0.7])
-        fig.colorbar(im, cax=cbar_ax)
-        # save as png
-        nt_str = '_dt%02d' % nt
-        plt.savefig(pic_path+'/'+'comp_pred_'+fname+nt_str+'.png')
-        plt.close()
-    
-def make_gifs(x, idx, name,frame_predictor,encoder,decoder):
-
+def pred_single_model(x,opt,frame_predictor,encoder,decoder):
+    """
+    Do one prediction and return as numpy array
+    """
     all_gen = []
-    
     gen_seq = []
     gt_seq = []
     frame_predictor.hidden = frame_predictor.init_hidden()
@@ -96,24 +64,88 @@ def make_gifs(x, idx, name,frame_predictor,encoder,decoder):
             all_gen.append(x_in)
 
     # prep np.array to be plotted
-    TRU = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
-    GEN = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])
+    GEN = np.zeros([opt.batch_size, opt.n_eval,  1, opt.image_width, opt.image_width])
     for i in range(opt.n_eval):
-        TRU[i,:,:,:,:] = inv_scaler(x[i].cpu().numpy())
-        GEN[i,:,:,:,:] = inv_scaler(all_gen[i].cpu().numpy())
-    # plot
-    print(" ground truth max:",np.max(TRU)," gen max:",np.max(GEN))
-    for j in range(opt.batch_size):
-        plot_rainfall(TRU[:,j,0,:,:],GEN[:,j,0,:,:],opt.log_dir,name+"_sample"+str(j))
+        GEN[:,i,:,:,:] = inv_scaler(all_gen[i].cpu().numpy())
+    return GEN
+
+def eval_whole_dataset(batch_loader, opt, name, threshold,
+                       frame_predictor,encoder,decoder):
+    """
+    Perform evaluation for the whole dataset
+    """
+    # initialize
+    emp = np.empty((0,opt.n_eval),float)
+    SumSE_all = emp
+    hit_all = emp
+    miss_all =  emp
+    falarm_all = emp
+    m_xy_all = emp
+    m_xx_all = emp
+    m_yy_all = emp
+    MaxSE_all =  emp
+    FSS_t_all =  emp
+
+    print("total batches to be processed: ",len(batch_loader))
+    dtype = torch.cuda.FloatTensor
+
+    ibatch = 0
+    for sequence in batch_loader:
+        x = utils.normalize_data(opt, dtype, sequence)
+        ibatch += 1
+        print(name," threshold:",threshold," batch:",ibatch)
+        x_in = x[0]
+        # Prep True data
+        TRU = np.zeros([opt.batch_size, opt.n_eval, 1, opt.image_width, opt.image_width])
+        for i in range(opt.n_eval):
+            TRU[:,i,:,:,:] = inv_scaler(x[i].cpu().numpy())
+        # perform one prediction
+        GEN = pred_single_model(x,opt,frame_predictor,encoder,decoder)
+        print(" ground truth max:",np.max(TRU)," gen max:",np.max(GEN))
         
-# plot comparison of predicted vs ground truth
-def plot_comp_prediction(opt,df_sampled,mode='png_ind'):
+        # Evaluation
+        SumSE,hit,miss,falarm,m_xy,m_xx,m_yy,MaxSE = StatRainfall(TRU,GEN,
+                                                                  th=threshold)
+        FSS_t = FSS_for_tensor(TRU,GEN,th=threshold,win=10)
+        SumSE_all = np.append(SumSE_all,SumSE,axis=0)
+        hit_all = np.append(hit_all,hit,axis=0)
+        miss_all = np.append(miss_all,miss,axis=0)
+        falarm_all = np.append(falarm_all,falarm,axis=0)
+        m_xy_all = np.append(m_xy_all,m_xy,axis=0)
+        m_xx_all = np.append(m_xx_all,m_xx,axis=0)
+        m_yy_all = np.append(m_yy_all,m_yy,axis=0)
+        MaxSE_all = np.append(MaxSE_all,MaxSE,axis=0)
+        FSS_t_all = np.append(FSS_t_all,FSS_t,axis=0)
+#        if ibatch==5:
+#            break
+
+    # calc metric for the whole dataset
+    RMSE,CSI,FAR,POD,Cor,MaxMSE,FSS_mean = MetricRainfall(SumSE_all,hit_all,miss_all,falarm_all,
+                                                          m_xy_all,m_xx_all,m_yy_all,
+                                                          MaxSE_all,FSS_t_all,axis=(0))
+    # save evaluated metric as csv file
+    tpred = (np.arange(opt.n_eval)+1.0)*5.0 # in minutes
+    df = pd.DataFrame({'tpred_min':tpred,
+                       'RMSE':RMSE,
+                       'CSI':CSI,
+                       'FAR':FAR,
+                       'POD':POD,
+                       'Cor':Cor,
+                       'MaxMSE': MaxMSE,
+                       'FSS_mean': FSS_mean})
+    df.to_csv(os.path.join(opt.log_dir,
+                           'evaluation_predtime_%s_%.2f.csv' % (name,threshold)))
+    
+def post_eval_prediction(opt,mode='png_ind'):
+    """
+    Evaluate the model with several criteria for rainfal nowcasting task
+
+    """
     
     print("Random Seed: ", opt.seed)
     random.seed(opt.seed)
     torch.manual_seed(opt.seed)
     torch.cuda.manual_seed_all(opt.seed)
-    dtype = torch.cuda.FloatTensor
     
     # ---------------- load the models  ----------------
     tmp = torch.load(opt.model_path)
@@ -166,45 +198,26 @@ def plot_comp_prediction(opt,df_sampled,mode='png_ind'):
                              drop_last=True,
                              pin_memory=True)
     
-    def get_training_batch():
-        while True:
-            for sequence in train_loader:
-                batch = utils.normalize_data(opt, dtype, sequence)
-                yield batch
-    training_batch_generator = get_training_batch()
-    
-    def get_testing_batch():
-        while True:
-            for sequence in test_loader:
-                batch = utils.normalize_data(opt, dtype, sequence)
-                yield batch 
-    testing_batch_generator = get_testing_batch()
-
-    for i in range(0, opt.N, opt.batch_size):
-        print(i)
-        # plot train
-        train_x = next(training_batch_generator)
-        make_gifs(train_x, i, 'train',frame_predictor,encoder,decoder)
-        
-        # plot test
-        test_x = next(testing_batch_generator)
-        make_gifs(test_x, i, 'test',frame_predictor,encoder,decoder)
-        break
+    for threshold in [0.5,10.0,20.0]:
+        #eval_whole_dataset(train_loader, opt, 'train', threshold,
+        #                   frame_predictor,encoder,decoder)
+        eval_whole_dataset(test_loader, opt, 'test', threshold,
+                           frame_predictor,encoder,decoder)
         
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--batch_size', default=100, type=int, help='batch size')
     parser.add_argument('--data_root', default='data', help='root directory for data')
-    parser.add_argument('--train_path', default='', help='csv file containing filenames for training')
-    parser.add_argument('--valid_path', default='', help='csv file containing filenames for validation')
+    parser.add_argument('--train_path', default='data', help='csv file containing filenames for training')
+    parser.add_argument('--valid_path', default='data', help='csv file containing filenames for validation')
     parser.add_argument('--model_path', default='', help='path to model')
     parser.add_argument('--log_dir', default='', help='directory to save generations to')
     parser.add_argument('--seed', default=1, type=int, help='manual seed')
     parser.add_argument('--n_past', type=int, default=2, help='number of frames to condition on')
     parser.add_argument('--n_future', type=int, default=28, help='number of frames to predict')
     parser.add_argument('--num_threads', type=int, default=0, help='number of data loading threads')
-    parser.add_argument('--N', type=int, default=256, help='number of samples')
+    parser.add_argument('--N', type=int, default=256, help='number of generated samples')
     parser.add_argument('--data_threads', type=int, default=5, help='number of data loading threads')
     
     opt = parser.parse_args()
@@ -212,15 +225,7 @@ if __name__ == '__main__':
 
     opt.n_eval = opt.n_past+opt.n_future
     opt.max_step = opt.n_eval
-
-    # samples to be plotted
-    sample_path = '../datasets/jma/sampled_forplot_3day_JMARadar.csv'
-
-    # read sampled data in csv
-    df_sampled = pd.read_csv(sample_path)
-    print('samples to be plotted')
-    print(df_sampled)
     
-    plot_comp_prediction(opt,df_sampled,mode='png_ind')
+    post_eval_prediction(opt,mode='png_ind')
 
 

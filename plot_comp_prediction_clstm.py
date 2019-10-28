@@ -71,29 +71,36 @@ def make_gifs(x, idx, name,frame_predictor,encoder,decoder):
 
     all_gen = []
     
-    gen_seq = []
-    gt_seq = []
     frame_predictor.hidden = frame_predictor.init_hidden()
     x_in = x[0]
     all_gen.append(x_in)
     for i in range(1, opt.n_eval):
-        h = encoder(x_in)
-        if opt.last_frame_skip or i < opt.n_past:	
-            h, skip = h
-        else:
-            h, _ = h
-        h = h.detach()
+#        h = encoder(x_in)
+#        if opt.last_frame_skip or i < opt.n_past:	
+#            h, skip = h
+#        else:
+#            h, _ = h
+#        h = h.detach()
+#        if i < opt.n_past:
+#            h_target = encoder(x[i])[0].detach()
+#            frame_predictor(h)
+#            x_in = x[i]
+#            all_gen.append(x_in)
+#        else:
+#            h = frame_predictor(h.detach())
+#            x_in = decoder([h, skip]).detach()
+#            all_gen.append(x_in)
         if i < opt.n_past:
-            h_target = encoder(x[i])[0].detach()
-            frame_predictor(h)
-            x_in = x[i]
-            all_gen.append(x_in)
+            x_in = x[i-1] # use ground truth frame for the first half
+            h, skip = encoder(x_in)
+            h = h.detach()
         else:
-            h = frame_predictor(h.detach())
-            x_in = decoder([h, skip]).detach()
-            gen_seq.append(x_in.data.cpu().numpy())
-            gt_seq.append(x[i].data.cpu().numpy())
-            all_gen.append(x_in)
+            x_in = x_pred # use predicted frame for the second half (NOT use ground truth)
+            _, skip = encoder(x_in)
+            h = h_pred
+        h_pred = frame_predictor(h).detach()
+        x_pred = decoder([h_pred, skip]).detach()
+        all_gen.append(x_pred)
 
     # prep np.array to be plotted
     TRU = np.zeros([opt.n_eval, opt.batch_size, 1, opt.image_width, opt.image_width])

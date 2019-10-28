@@ -80,7 +80,7 @@ class CLSTM_EP2(nn.Module):
         # initialize internal state
         (hp, cp) = self.predictor.init_hidden(batch_size=bsize, hidden=self.hidden_channels, shape=(height, width))
         # output variable
-        xout = Variable(torch.zeros(bsize, self.tsize channels, height, width)).cuda()
+        xout = Variable(torch.zeros(bsize, self.tsize, channels, height, width)).cuda()
         # Predict
         for it in range(self.tsize):
             # forward

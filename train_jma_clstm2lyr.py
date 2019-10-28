@@ -81,7 +81,9 @@ else:
 
 # CLSTM EP2 model
 import models.convolution_lstm_mod as convlstm_models
-conv_predictor = convlstm_models.CLSTM_EP2(input_channels=1,hidden_channels=8,kernel_size=3,
+hidden_channels=8
+kernel_size=3
+conv_predictor = convlstm_models.CLSTM_EP2(opt.channels,hidden_channels,kernel_size,
                                            opt.n_past,opt.n_future)
 
 import models.lstm as lstm_models
@@ -208,7 +210,7 @@ def train(x):
         h_pred = frame_predictor(h)
         x_pred = decoder([h_pred, skip]) + x_pred_conv[:,i,:,:,:]
         mse += mse_criterion(x_pred, x[i])
-        #import pdb; pdb.set_trace()
+        import pdb; pdb.set_trace()
 
     loss = mse
     loss.backward()
@@ -226,6 +228,7 @@ flog = open('%s/train_loss.csv' % opt.log_dir,'w')
 flog.write('epoch, mse loss\n')
 
 for epoch in range(opt.niter):
+    conv_predictor.train()
     frame_predictor.train()
     encoder.train()
     decoder.train()
@@ -251,6 +254,7 @@ for epoch in range(opt.niter):
         'encoder': encoder,
         'decoder': decoder,
         'frame_predictor': frame_predictor,
+        'conv_predictor': conv_predictor,
         'opt': opt},
         '%s/model.pth' % opt.log_dir)
     if epoch % 10 == 0:

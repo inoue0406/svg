@@ -210,7 +210,7 @@ def train(x):
         h_pred = frame_predictor(h)
         x_pred = decoder([h_pred, skip]) + x_pred_conv[:,i,:,:,:]
         mse += mse_criterion(x_pred, x[i])
-        import pdb; pdb.set_trace()
+        #import pdb; pdb.set_trace()
 
     loss = mse
     loss.backward()
